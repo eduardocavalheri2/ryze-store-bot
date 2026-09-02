@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: ryze-store-bot
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DISCORD_GUILD_ID
+        sync: false
