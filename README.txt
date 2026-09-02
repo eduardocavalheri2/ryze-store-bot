@@ -1,34 +1,39 @@
-KING STORE DISCORD BOT V2 - CORRIGIDO
+KING STORE DISCORD BOT V3 - RENDER FIX
 
-O que foi corrigido:
-- Compatibilidade com Render Web Service: servidor HTTP em 0.0.0.0:$PORT.
-- Endpoint /health para health check do Render.
-- Dockerfile corrigido.
-- Variáveis de ambiente para token e ID opcional do servidor.
-- Botões de compra persistentes com custom_id único por produto.
-- Botões de pedido persistentes com custom_id único por pedido.
-- Botões são restaurados automaticamente após reinício.
-- /setup agora cria/encontra o canal da loja de verdade.
-- Entrega por DM usando fetch_user.
-- IDs, estoque e gravação do JSON mais seguros.
-- /produto remover adicionado.
-- Sincronização rápida dos slash commands quando DISCORD_GUILD_ID é informado.
+Esta versão mantém as funções da V2 e corrige o principal problema visto no Render:
+- HTTP health server em 0.0.0.0:$PORT.
+- /health aceita também query strings.
+- Erros HTTP 429 do Discord não derrubam imediatamente o processo.
+- Backoff conservador para 429/Cloudflare antes de nova tentativa.
+- Falhas de sincronização dos slash commands não impedem o bot de conectar.
+- Slash commands são tentados novamente no on_ready quando necessário.
+- LoginFailure (token inválido) é mostrado claramente em vez de criar loop infinito.
+- Reconexões de Gateway/rede recebem espera progressiva.
+- Persistência dos botões continua funcionando.
+- data.json é protegido contra gravação parcial.
 
 RENDER
-1. Suba os arquivos deste projeto para o repositório.
-2. No Render, use Web Service e Docker.
-3. Em Environment Variables, crie:
-   DISCORD_TOKEN = token do seu bot
+1. Substitua os arquivos do repositório pelos arquivos deste ZIP.
+2. No Render, mantenha o serviço como Web Service + Docker.
+3. Em Environment Variables, configure:
+   DISCORD_TOKEN = token real do seu bot
    DISCORD_GUILD_ID = ID do seu servidor (recomendado)
 4. Health Check Path: /health
-5. Deploy.
+5. Faça apenas um novo Deploy depois de substituir os arquivos.
+6. Se aparecer HTTP 429, NÃO fique reiniciando manualmente. Esta versão espera e tenta novamente.
 
-IMPORTANTE SOBRE O TOKEN:
-Nunca coloque o token diretamente no GitHub. Use Environment Variables do Render.
-Se o token já tiver sido publicado em algum lugar, gere um novo no Discord Developer Portal.
+IMPORTANTE SOBRE O TOKEN
+Nunca coloque o token real no GitHub.
+Se o token já foi exposto, gere outro no Discord Developer Portal.
+O arquivo .env.example contém apenas um placeholder.
+
+DOCKER
+O Dockerfile usa Python 3.12, instala requirements.txt e inicia bot.py.
+O Render define PORT automaticamente.
 
 LOCAL
-- Windows: execute start.bat
+- Edite uma cópia de .env.example para .env e coloque o token.
+- Execute start.bat.
 - Ou: pip install -r requirements.txt && python bot.py
 
 COMANDOS
@@ -41,5 +46,7 @@ COMANDOS
 /pedidos
 /gerarkey
 
-OBSERVAÇÃO SOBRE DADOS
-O arquivo data.json é simples e funciona para testes. Em uma instância gratuita, o armazenamento local pode não ser permanente após determinados reinícios/redeploys. Para uma loja em produção, use um banco de dados externo ou armazenamento persistente.
+DADOS
+O data.json é armazenamento local simples para testes. No plano gratuito do Render,
+o armazenamento local pode não ser permanente depois de determinados reinícios/redeploys.
+Para produção, use armazenamento persistente ou banco de dados externo.
