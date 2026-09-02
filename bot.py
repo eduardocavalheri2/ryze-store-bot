@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import os
 import secrets
 import threading
@@ -23,13 +22,6 @@ DB = Path(os.getenv("DATA_FILE", "data.json"))
 DEFAULT_DB = {"products": [], "orders": [], "settings": {}}
 DB_LOCK = threading.RLock()
 
-# Evita que logs da biblioteca escondam o erro real no Render.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
-log = logging.getLogger("king-store")
-
 
 def load_db() -> dict[str, Any]:
     with DB_LOCK:
@@ -37,13 +29,8 @@ def load_db() -> dict[str, Any]:
             save_db(DEFAULT_DB.copy())
         try:
             data = json.loads(DB.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            log.warning("Não foi possível ler data.json (%s). Criando banco vazio.", exc)
-            data = {
-                "products": [],
-                "orders": [],
-                "settings": {},
-            }
+        except (json.JSONDecodeError, OSError):
+            data = DEFAULT_DB.copy()
             save_db(data)
         data.setdefault("products", [])
         data.setdefault("orders", [])
@@ -55,19 +42,12 @@ def save_db(data: dict[str, Any]) -> None:
     with DB_LOCK:
         DB.parent.mkdir(parents=True, exist_ok=True)
         temp = DB.with_suffix(".tmp")
-        temp.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         temp.replace(DB)
 
 
 def is_admin(interaction: discord.Interaction) -> bool:
-    return bool(
-        interaction.guild
-        and interaction.user
-        and interaction.user.guild_permissions.administrator
-    )
+    return bool(interaction.guild and interaction.user and interaction.user.guild_permissions.administrator)
 
 
 def new_id() -> str:
@@ -80,12 +60,10 @@ def money(value: float) -> str:
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
-        path = self.path.split("?", 1)[0]
-        if path not in ("/", "/health"):
+        if self.path not in ("/", "/health"):
             self.send_response(404)
             self.end_headers()
             return
-
         body = b"ok"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -98,15 +76,10 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def start_health_server() -> ThreadingHTTPServer:
-    # Render espera o processo ouvindo em 0.0.0.0 e na porta PORT.
     server = ThreadingHTTPServer(("0.0.0.0", PORT), HealthHandler)
-    thread = threading.Thread(
-        target=server.serve_forever,
-        name="render-health",
-        daemon=True,
-    )
+    thread = threading.Thread(target=server.serve_forever, name="render-health", daemon=True)
     thread.start()
-    log.info("HTTP health server listening on 0.0.0.0:%s", PORT)
+    print(f"HTTP health server listening on 0.0.0.0:{PORT}")
     return server
 
 
@@ -122,40 +95,25 @@ class BuyButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         if not interaction.guild:
-            return await interaction.response.send_message(
-                "❌ Este botão só funciona dentro do servidor.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("❌ Este botão só funciona dentro do servidor.", ephemeral=True)
 
         data = load_db()
-        product = next(
-            (p for p in data["products"] if p.get("id") == self.product_id),
-            None,
-        )
+        product = next((p for p in data["products"] if p["id"] == self.product_id), None)
         if not product or not product.get("stock"):
-            return await interaction.response.send_message(
-                "❌ Produto sem estoque.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("❌ Produto sem estoque.", ephemeral=True)
 
-        category = discord.utils.get(
-            interaction.guild.categories,
-            name="🛒 COMPRAS",
-        )
+        category = discord.utils.get(interaction.guild.categories, name="🛒 COMPRAS")
         if category is None:
             category = await interaction.guild.create_category("🛒 COMPRAS")
 
         overwrites = {
-            interaction.guild.default_role: discord.PermissionOverwrite(
-                view_channel=False
-            ),
+            interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(
                 view_channel=True,
                 send_messages=True,
                 read_message_history=True,
             ),
         }
-
         channel_name = f"pedido-{interaction.user.name}"[:90]
         channel = await interaction.guild.create_text_channel(
             channel_name,
@@ -178,22 +136,11 @@ class BuyButton(discord.ui.Button):
 
         embed = discord.Embed(
             title="🛒 Pedido criado",
-            description=(
-                f"**{product['name']}**\n"
-                f"💰 **{money(float(product['price']))}**\n\n"
-                f"Pedido: `{order_id}`"
-            ),
+            description=f"**{product['name']}**\n💰 **{money(float(product['price']))}**\n\nPedido: `{order_id}`",
             color=0x7C3AED,
         )
-        await channel.send(
-            interaction.user.mention,
-            embed=embed,
-            view=OrderView(order_id),
-        )
-        await interaction.response.send_message(
-            f"✅ Pedido aberto: {channel.mention}",
-            ephemeral=True,
-        )
+        await channel.send(interaction.user.mention, embed=embed, view=OrderView(order_id))
+        await interaction.response.send_message(f"✅ Pedido aberto: {channel.mention}", ephemeral=True)
 
 
 class BuyView(discord.ui.View):
@@ -214,41 +161,20 @@ class ConfirmButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         if not is_admin(interaction):
-            return await interaction.response.send_message(
-                "❌ Sem permissão.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
 
         data = load_db()
-        order = next(
-            (o for o in data["orders"] if o.get("id") == self.order_id),
-            None,
-        )
+        order = next((o for o in data["orders"] if o["id"] == self.order_id), None)
         if not order:
-            return await interaction.response.send_message(
-                "❌ Pedido não encontrado.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("❌ Pedido não encontrado.", ephemeral=True)
         if order.get("status") == "entregue":
-            return await interaction.response.send_message(
-                "⚠️ Este pedido já foi entregue.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("⚠️ Este pedido já foi entregue.", ephemeral=True)
         if order.get("status") == "fechado":
-            return await interaction.response.send_message(
-                "⚠️ Este pedido está fechado.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("⚠️ Este pedido está fechado.", ephemeral=True)
 
-        product = next(
-            (p for p in data["products"] if p.get("id") == order.get("product")),
-            None,
-        )
+        product = next((p for p in data["products"] if p["id"] == order["product"]), None)
         if not product or not product.get("stock"):
-            return await interaction.response.send_message(
-                "❌ Estoque vazio.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("❌ Estoque vazio.", ephemeral=True)
 
         item = product["stock"].pop(0)
         order["status"] = "entregue"
@@ -257,56 +183,34 @@ class ConfirmButton(discord.ui.Button):
 
         try:
             user = await interaction.client.fetch_user(int(order["user"]))
-            await user.send(
-                f"📦 **Entrega do pedido {self.order_id}**\n\n`{item}`"
-            )
+            await user.send(f"📦 **Entrega do pedido {self.order_id}**\n\n`{item}`")
         except (discord.Forbidden, discord.NotFound):
-            return await interaction.response.send_message(
-                "⚠️ Pedido marcado como entregue, mas não consegui enviar DM ao cliente. "
-                "Confira as configurações de privacidade dele.",
+            await interaction.response.send_message(
+                "⚠️ Pedido entregue no estoque, mas não consegui enviar DM ao cliente. Confira as configurações de privacidade dele.",
                 ephemeral=True,
             )
+            return
 
-        await interaction.response.send_message(
-            "✅ Pagamento confirmado e produto enviado por DM.",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("✅ Pagamento confirmado e produto enviado por DM.", ephemeral=True)
 
 
 class CloseButton(discord.ui.Button):
     def __init__(self, order_id: str):
-        super().__init__(
-            label="Fechar",
-            emoji="🔒",
-            style=discord.ButtonStyle.danger,
-            custom_id=f"ks:close:{order_id}",
-        )
+        super().__init__(label="Fechar", emoji="🔒", style=discord.ButtonStyle.danger, custom_id=f"ks:close:{order_id}")
         self.order_id = order_id
 
     async def callback(self, interaction: discord.Interaction):
         if not is_admin(interaction):
-            return await interaction.response.send_message(
-                "❌ Sem permissão.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
 
         data = load_db()
-        order = next(
-            (o for o in data["orders"] if o.get("id") == self.order_id),
-            None,
-        )
+        order = next((o for o in data["orders"] if o["id"] == self.order_id), None)
         if order and order.get("status") == "aguardando":
             order["status"] = "fechado"
             save_db(data)
-
-        await interaction.response.send_message(
-            "🔒 Pedido fechado.",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("🔒 Pedido fechado.", ephemeral=True)
         try:
-            await interaction.channel.delete(
-                reason=f"Pedido {self.order_id} fechado"
-            )
+            await interaction.channel.delete(reason=f"Pedido {self.order_id} fechado")
         except discord.HTTPException:
             pass
 
@@ -328,21 +232,12 @@ class SetupModal(discord.ui.Modal, title="Configuração da King Store"):
 
     async def on_submit(self, interaction: discord.Interaction):
         if not interaction.guild:
-            return await interaction.response.send_message(
-                "❌ Use este comando dentro de um servidor.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("❌ Use este comando dentro de um servidor.", ephemeral=True)
 
         name = str(self.channel_name).strip()
-        channel = discord.utils.get(
-            interaction.guild.text_channels,
-            name=name,
-        )
+        channel = discord.utils.get(interaction.guild.text_channels, name=name)
         if channel is None:
-            channel = await interaction.guild.create_text_channel(
-                name,
-                reason="Configuração da King Store",
-            )
+            channel = await interaction.guild.create_text_channel(name, reason="Configuração da King Store")
 
         data = load_db()
         data["settings"][str(interaction.guild.id)] = {
@@ -359,37 +254,7 @@ class SetupModal(discord.ui.Modal, title="Configuração da King Store"):
 class KingStoreBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            help_command=None,
-        )
-        self.commands_synced = False
-
-    async def sync_commands(self) -> None:
-        """Sincroniza slash commands sem derrubar o bot se o Discord retornar 429."""
-        try:
-            if GUILD_ID.isdigit():
-                guild = discord.Object(id=int(GUILD_ID))
-                self.tree.copy_global_to(guild=guild)
-                synced = await self.tree.sync(guild=guild)
-                log.info(
-                    "Slash commands sincronizados no servidor %s: %s",
-                    GUILD_ID,
-                    len(synced),
-                )
-            else:
-                synced = await self.tree.sync()
-                log.info("Slash commands globais sincronizados: %s", len(synced))
-            self.commands_synced = True
-        except discord.HTTPException as exc:
-            log.warning(
-                "Não foi possível sincronizar os slash commands agora (HTTP %s). "
-                "O bot continuará online e tentará novamente.",
-                exc.status,
-            )
-        except Exception:
-            log.exception("Erro inesperado ao sincronizar slash commands.")
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
 
     async def setup_hook(self):
         data = load_db()
@@ -403,8 +268,14 @@ class KingStoreBot(commands.Bot):
             if order.get("id") and order.get("status") == "aguardando":
                 self.add_view(OrderView(order["id"]))
 
-        # Um 429 aqui não pode impedir o bot de conectar.
-        await self.sync_commands()
+        if GUILD_ID.isdigit():
+            guild = discord.Object(id=int(GUILD_ID))
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            print(f"Slash commands sincronizados no servidor {GUILD_ID}: {len(synced)}")
+        else:
+            synced = await self.tree.sync()
+            print(f"Slash commands globais sincronizados: {len(synced)}")
 
 
 bot = KingStoreBot()
@@ -412,54 +283,26 @@ bot = KingStoreBot()
 
 @bot.event
 async def on_ready():
-    log.info("King Store V2 online como %s (ID %s)", bot.user, bot.user.id)
-    if not bot.commands_synced:
-        await bot.sync_commands()
+    print(f"King Store V2 online como {bot.user} (ID {bot.user.id})")
 
 
 @bot.tree.command(name="setup", description="Configura a loja sem editar o código")
 async def setup(interaction: discord.Interaction):
     if not is_admin(interaction):
-        return await interaction.response.send_message(
-            "❌ Apenas administradores.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Apenas administradores.", ephemeral=True)
     await interaction.response.send_modal(SetupModal())
 
 
-produto = app_commands.Group(
-    name="produto",
-    description="Gerenciar produtos",
-)
+produto = app_commands.Group(name="produto", description="Gerenciar produtos")
 
 
 @produto.command(name="criar", description="Criar produto")
-@app_commands.describe(
-    nome="Nome do produto",
-    preco="Preço em reais",
-    descricao="Descrição do produto",
-)
-async def criar(
-    interaction: discord.Interaction,
-    nome: str,
-    preco: float,
-    descricao: str = "",
-):
+@app_commands.describe(nome="Nome do produto", preco="Preço em reais", descricao="Descrição do produto")
+async def criar(interaction: discord.Interaction, nome: str, preco: float, descricao: str = ""):
     if not is_admin(interaction):
-        return await interaction.response.send_message(
-            "❌ Sem permissão.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
     if preco < 0:
-        return await interaction.response.send_message(
-            "❌ O preço não pode ser negativo.",
-            ephemeral=True,
-        )
-    if not nome.strip():
-        return await interaction.response.send_message(
-            "❌ O nome não pode estar vazio.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ O preço não pode ser negativo.", ephemeral=True)
 
     data = load_db()
     product = {
@@ -472,53 +315,32 @@ async def criar(
     data["products"].append(product)
     save_db(data)
     bot.add_view(BuyView(product["id"]))
-    await interaction.response.send_message(
-        f"✅ Produto criado: `{product['id']}`",
-        ephemeral=True,
-    )
+    await interaction.response.send_message(f"✅ Produto criado: `{product['id']}`", ephemeral=True)
 
 
 @produto.command(name="estoque", description="Adicionar item/key ao estoque")
 @app_commands.describe(id="ID do produto", item="Key ou conteúdo para entregar")
 async def estoque(interaction: discord.Interaction, id: str, item: str):
     if not is_admin(interaction):
-        return await interaction.response.send_message(
-            "❌ Sem permissão.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
 
     data = load_db()
-    product = next(
-        (p for p in data["products"] if p.get("id", "").upper() == id.upper()),
-        None,
-    )
+    product = next((p for p in data["products"] if p["id"].upper() == id.upper()), None)
     if not product:
-        return await interaction.response.send_message(
-            "❌ Produto não encontrado.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Produto não encontrado.", ephemeral=True)
     if not item.strip():
-        return await interaction.response.send_message(
-            "❌ O item não pode estar vazio.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ O item não pode estar vazio.", ephemeral=True)
 
-    product.setdefault("stock", []).append(item.strip())
+    product["stock"].append(item.strip())
     save_db(data)
-    await interaction.response.send_message(
-        "✅ Item adicionado ao estoque.",
-        ephemeral=True,
-    )
+    await interaction.response.send_message("✅ Item adicionado ao estoque.", ephemeral=True)
 
 
 @produto.command(name="listar", description="Listar produtos")
 async def listar(interaction: discord.Interaction):
     data = load_db()
     if not data["products"]:
-        return await interaction.response.send_message(
-            "Nenhum produto cadastrado.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("Nenhum produto cadastrado.", ephemeral=True)
     text = "\n".join(
         f"`{p['id']}` • **{p['name']}** • {money(float(p['price']))} • {len(p.get('stock', []))} em estoque"
         for p in data["products"]
@@ -530,26 +352,14 @@ async def listar(interaction: discord.Interaction):
 @app_commands.describe(id="ID do produto")
 async def remover(interaction: discord.Interaction, id: str):
     if not is_admin(interaction):
-        return await interaction.response.send_message(
-            "❌ Sem permissão.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
     data = load_db()
     before = len(data["products"])
-    data["products"] = [
-        p for p in data["products"]
-        if p.get("id", "").upper() != id.upper()
-    ]
+    data["products"] = [p for p in data["products"] if p["id"].upper() != id.upper()]
     if len(data["products"]) == before:
-        return await interaction.response.send_message(
-            "❌ Produto não encontrado.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Produto não encontrado.", ephemeral=True)
     save_db(data)
-    await interaction.response.send_message(
-        "✅ Produto removido.",
-        ephemeral=True,
-    )
+    await interaction.response.send_message("✅ Produto removido.", ephemeral=True)
 
 
 bot.tree.add_command(produto)
@@ -558,27 +368,16 @@ bot.tree.add_command(produto)
 @bot.tree.command(name="painel", description="Publicar o catálogo da loja")
 async def painel(interaction: discord.Interaction):
     if not is_admin(interaction):
-        return await interaction.response.send_message(
-            "❌ Sem permissão.",
-            ephemeral=True,
-        )
-    if not interaction.guild:
-        return await interaction.response.send_message(
-            "❌ Use este comando dentro de um servidor.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
 
     data = load_db()
-    settings = data["settings"].get(str(interaction.guild.id), {})
-    target = interaction.guild.get_channel(settings.get("store_channel"))
+    settings = data["settings"].get(str(interaction.guild.id), {}) if interaction.guild else {}
+    target = interaction.guild.get_channel(settings.get("store_channel")) if interaction.guild else None
     if not isinstance(target, discord.TextChannel):
         target = interaction.channel
 
     if not data["products"]:
-        return await interaction.response.send_message(
-            "❌ Nenhum produto cadastrado.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Nenhum produto cadastrado.", ephemeral=True)
 
     for product in data["products"]:
         embed = discord.Embed(
@@ -586,35 +385,18 @@ async def painel(interaction: discord.Interaction):
             description=product["description"] or "Produto digital",
             color=0x7C3AED,
         )
-        embed.add_field(
-            name="💰 Preço",
-            value=money(float(product["price"])),
-            inline=True,
-        )
-        embed.add_field(
-            name="📦 Estoque",
-            value=str(len(product.get("stock", []))),
-            inline=True,
-        )
+        embed.add_field(name="💰 Preço", value=money(float(product["price"])), inline=True)
+        embed.add_field(name="📦 Estoque", value=str(len(product.get("stock", []))), inline=True)
         embed.set_footer(text=f"ID: {product['id']} • King Store")
-        await target.send(
-            embed=embed,
-            view=BuyView(product["id"]),
-        )
+        await target.send(embed=embed, view=BuyView(product["id"]))
 
-    await interaction.response.send_message(
-        f"✅ Painel publicado em {target.mention}.",
-        ephemeral=True,
-    )
+    await interaction.response.send_message(f"✅ Painel publicado em {target.mention}.", ephemeral=True)
 
 
 @bot.tree.command(name="pedidos", description="Ver os últimos pedidos")
 async def pedidos(interaction: discord.Interaction):
     if not is_admin(interaction):
-        return await interaction.response.send_message(
-            "❌ Sem permissão.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
     data = load_db()
     orders = data["orders"][-20:]
     text = "\n".join(
@@ -627,149 +409,85 @@ async def pedidos(interaction: discord.Interaction):
 @bot.tree.command(name="gerarkey", description="Gera uma key aleatória")
 async def gerarkey(interaction: discord.Interaction):
     if not is_admin(interaction):
-        return await interaction.response.send_message(
-            "❌ Sem permissão.",
-            ephemeral=True,
-        )
+        return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
     key = "KS-" + "-".join(
-        "".join(
-            secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
-            for _ in range(5)
-        )
+        "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(5))
         for _ in range(3)
     )
-    await interaction.response.send_message(
-        f"🔑 `{key}`",
-        ephemeral=True,
-    )
+    await interaction.response.send_message(f"🔑 `{key}`", ephemeral=True)
+
+
+def _retry_after_from_http_error(exc: discord.HTTPException) -> float:
+    """Obtém o Retry-After enviado pelo Discord/Cloudflare, se disponível."""
+    try:
+        headers = getattr(exc.response, "headers", {}) or {}
+        value = headers.get("Retry-After") or headers.get("retry-after")
+        if value is not None:
+            return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+
+    # O erro 429 de login mostrado pelo Render pode não expor o header.
+    # Nesse caso, usamos 15 minutos para não martelar a API e piorar o bloqueio.
+    return 900.0
 
 
 async def run_bot_with_retry() -> None:
-    """Mantém o bot vivo e trata 429 sem reutilizar uma sessão HTTP fechada.
-
-    O erro anterior acontecia porque ``bot.close()`` fechava a sessão aiohttp e
-    o mesmo objeto ``bot`` era reutilizado na tentativa seguinte. Isso produz
-    ``RuntimeError: Session is closed``. Em caso de 429, esperamos usando
-    backoff exponencial + jitter e reiniciamos o processo para criar uma sessão
-    HTTP completamente nova.
-    """
-    if not TOKEN or TOKEN == "COLE_O_TOKEN_AQUI":
-        raise RuntimeError(
-            "Configure a variável de ambiente DISCORD_TOKEN no Render."
-        )
-
-    import random
-    import sys
-
+    """Inicia o bot e trata 429 sem derrubar o Web Service do Render."""
     attempt = 0
     while True:
         try:
-            attempt += 1
-            log.info("Conectando ao Discord (tentativa %s)...", attempt)
+            print("Conectando ao Discord...")
             await bot.start(TOKEN, reconnect=True)
-            log.warning("Conexão com o Discord foi encerrada. Reiniciando em 15s.")
-            attempt = 0
-            await asyncio.sleep(15)
-            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
-
+            print("Conexão com o Discord encerrada normalmente.")
+            return
         except discord.LoginFailure:
-            log.exception(
-                "Falha de login no Discord. Verifique DISCORD_TOKEN. "
-                "Um token inválido não será repetido automaticamente."
-            )
+            # Token inválido não é um erro transitório: continuar tentando só
+            # aumenta o risco de rate limit.
+            print("ERRO: DISCORD_TOKEN inválido ou não autorizado. Corrija a variável no Render.")
             raise
-
         except discord.HTTPException as exc:
             if exc.status == 429:
-                # Usa Retry-After quando disponível e, caso contrário, backoff.
-                retry_after = None
-                try:
-                    raw = exc.response.headers.get("Retry-After")
-                    if raw:
-                        retry_after = float(raw)
-                except (AttributeError, TypeError, ValueError):
-                    retry_after = None
-
-                base_wait = min(600, 60 * (2 ** min(attempt - 1, 3)))
-                wait = max(retry_after or 0, base_wait) + random.uniform(1, 8)
-                wait = min(900, wait)
-
-                log.error(
-                    "Discord/Cloudflare respondeu HTTP 429 (Too Many Requests). "
-                    "Esperando %.0fs antes de criar uma sessão nova.",
-                    wait,
+                attempt += 1
+                retry_after = _retry_after_from_http_error(exc)
+                # Respeita o Retry-After; se ele faltar, aplica backoff crescente.
+                fallback = min(1800.0, 30.0 * (2 ** min(attempt - 1, 5)))
+                wait_seconds = max(retry_after, fallback if retry_after <= 0 else retry_after)
+                print(
+                    f"RATE LIMIT 429 do Discord/Cloudflare. Tentativa {attempt}. "
+                    f"Aguardando {wait_seconds:.0f}s antes de tentar novamente."
                 )
+                await asyncio.sleep(wait_seconds)
+                continue
 
-                # Fecha corretamente a sessão atual. NÃO reutilizamos o objeto
-                # porque discord.py fecha a sessão aiohttp em bot.close().
-                try:
-                    await bot.close()
-                except Exception:
-                    log.exception("Erro ao fechar a sessão após HTTP 429.")
-
-                await asyncio.sleep(wait)
-
-                # Reexecuta o processo atual. Isso garante novo loop/sessão aiohttp
-                # e elimina o ``RuntimeError: Session is closed`` observado no Render.
-                log.warning("Reiniciando o processo para nova sessão do Discord...")
-                os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
-                raise RuntimeError("os.execv não deveria retornar")
-
-            log.exception("Discord retornou HTTP %s. Reiniciando em 20s.", exc.status)
-            try:
-                await bot.close()
-            except Exception:
-                pass
-            await asyncio.sleep(20)
-            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
-
-        except (discord.GatewayNotFound, discord.ConnectionClosed) as exc:
-            wait = min(180, max(15, 15 * max(1, attempt)))
-            log.warning(
-                "Conexão com o Gateway caiu (%s). Nova tentativa em %ss.",
-                exc,
-                wait,
-            )
-            try:
-                await bot.close()
-            except Exception:
-                pass
-            await asyncio.sleep(wait)
-            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
-
+            # 5xx é normalmente transitório; outros códigos HTTP devem aparecer
+            # no log sem entrar em loop infinito.
+            if 500 <= exc.status < 600:
+                attempt += 1
+                wait_seconds = min(300.0, 10.0 * (2 ** min(attempt - 1, 5)))
+                print(f"Discord retornou HTTP {exc.status}. Nova tentativa em {wait_seconds:.0f}s.")
+                await asyncio.sleep(wait_seconds)
+                continue
+            raise
         except (OSError, asyncio.TimeoutError) as exc:
-            wait = min(180, max(15, 15 * max(1, attempt)))
-            log.warning("Erro de rede (%s). Reiniciando em %ss.", exc, wait)
-            try:
-                await bot.close()
-            except Exception:
-                pass
-            await asyncio.sleep(wait)
-            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
-
-        except Exception:
-            log.exception(
-                "Erro inesperado ao iniciar/manter o bot. Nova tentativa em 30s."
-            )
-            try:
-                await bot.close()
-            except Exception:
-                pass
-            await asyncio.sleep(30)
-            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
+            attempt += 1
+            wait_seconds = min(300.0, 10.0 * (2 ** min(attempt - 1, 5)))
+            print(f"Falha temporária de rede: {exc!r}. Nova tentativa em {wait_seconds:.0f}s.")
+            await asyncio.sleep(wait_seconds)
 
 
 async def main():
+    if not TOKEN or TOKEN == "COLE_O_TOKEN_AQUI":
+        raise RuntimeError("Configure a variável de ambiente DISCORD_TOKEN no Render.")
+
     health_server = start_health_server()
     try:
         await run_bot_with_retry()
     finally:
         health_server.shutdown()
-        health_server.server_close()
+        if not bot.is_closed():
+            await bot.close()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        log.info("Encerrado pelo usuário.")
+    asyncio.run(main())

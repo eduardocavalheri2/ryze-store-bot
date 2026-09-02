@@ -1,50 +1,38 @@
-KING STORE DISCORD BOT - RENDER 429 ROBUST FIX
+KING STORE DISCORD BOT V2 - 429 ROBUSTO
 
-Este pacote mantém a versão da loja e corrige o problema observado no Render:
-HTTP 429 (Too Many Requests) seguido por "RuntimeError: Session is closed".
-
-O QUE FOI CORRIGIDO
-- Tratamento robusto de HTTP 429 do Discord/Cloudflare.
-- Leitura de Retry-After quando o servidor fornece esse cabeçalho.
-- Backoff exponencial com jitter para evitar novas tentativas em sequência.
-- A sessão HTTP fechada não é reutilizada.
-- Em falhas de conexão, o processo é reiniciado de forma limpa para criar uma nova sessão aiohttp.
-- Servidor HTTP em 0.0.0.0:$PORT para o Render.
+CORRECOES DESTA VERSAO
+- Mantem o servidor HTTP em 0.0.0.0:$PORT para o Render.
 - Endpoint /health para health check.
-- Sincronização dos slash commands protegida contra 429.
-- Botões persistentes restaurados após reinício.
-- Banco JSON mantido no mesmo formato.
-
-IMPORTANTE SOBRE O TOKEN
-NUNCA coloque o token do bot no código ou no GitHub.
-Use somente a variável DISCORD_TOKEN no Render.
-
-Se o token foi exposto em código, chat, print ou repositório, considere-o comprometido:
-1. Gere um novo token no Discord Developer Portal.
-2. No Render, abra Environment -> Environment Variables.
-3. Substitua DISCORD_TOKEN pelo novo token.
-4. Salve e faça um novo deploy.
+- Dockerfile incluido e pronto para Render Docker.
+- Variaveis DISCORD_TOKEN e DISCORD_GUILD_ID via ambiente.
+- Tratamento robusto de HTTP 429 no login/sincronizacao: le Retry-After quando disponivel.
+- Se o Discord/Cloudflare nao enviar Retry-After, aguarda 15 minutos antes da nova tentativa.
+- Backoff para erros 5xx e falhas temporarias de rede.
+- Token invalido nao entra em loop: aparece claramente no log para corrigir no Render.
+- Botoes persistentes de compra e pedidos.
+- /setup cria/encontra o canal da loja.
+- Entrega por DM usando fetch_user.
+- /produto remover incluido.
+- Slash commands sincronizados quando DISCORD_GUILD_ID e informado.
 
 RENDER
-1. Substitua os arquivos do repositório pelos arquivos deste ZIP.
-2. Faça commit/push para a branch usada pelo serviço.
-3. No Render, abra o serviço ryze-store-bot.
-4. Vá em Deploys e use "Deploy latest commit" (ou aguarde o deploy automático).
-5. Health Check Path: /health.
-6. Confira os Logs.
+1. Substitua os arquivos do repositorio por estes arquivos e faca commit/push.
+2. No Render, abra o servico ryze-store-bot.
+3. Se estiver usando Docker, o Render detectara o Dockerfile.
+4. Confira Environment Variables:
+   DISCORD_TOKEN = token do bot
+   DISCORD_GUILD_ID = ID do seu servidor (recomendado)
+5. Health Check Path: /health
+6. Inicie um novo deploy do commit novo.
 
-Se aparecer HTTP 429 novamente, o bot agora espera antes de tentar e cria uma sessão HTTP nova.
-Não fique apertando Deploy repetidamente: isso pode gerar novas tentativas de conexão e aumentar o rate limit.
+IMPORTANTE SOBRE O 429
+O erro anterior mostrava HTTP 429 e a mensagem do Cloudflare/Discord pedindo cerca de 900 segundos antes de criar uma nova sessao. Esta versao nao encerra o processo quando isso acontece: ela mantem o health server ativo e espera o tempo indicado antes de tentar novamente.
 
-VARIÁVEIS
-DISCORD_TOKEN = token atual do bot
-DISCORD_GUILD_ID = ID do servidor (recomendado)
-PORT = fornecida automaticamente pelo Render
-DATA_FILE = opcional; padrão data.json
+Se o log mostrar 429, NAO fique clicando em deploy repetidamente. Deixe uma tentativa terminar. Deploys repetidos podem criar novas inicializacoes e prolongar o bloqueio.
 
-LOCAL
-Windows: execute start.bat
-Ou: pip install -r requirements.txt && python bot.py
+TOKEN
+Nunca coloque o token diretamente no GitHub. Use Environment Variables do Render.
+Se o token foi exposto, gere outro no Discord Developer Portal.
 
 COMANDOS
 /setup
@@ -56,5 +44,5 @@ COMANDOS
 /pedidos
 /gerarkey
 
-OBSERVAÇÃO SOBRE DADOS
-O arquivo data.json funciona para testes. Em uma instância gratuita, o armazenamento local pode não ser permanente após determinados reinícios/redeploys. Para uma loja em produção, use banco de dados externo ou armazenamento persistente.
+DADOS
+O data.json e adequado para testes. Em uma instancia gratuita, armazenamento local pode nao ser permanente apos determinados reinicios/redeploys. Para producao, use banco externo ou armazenamento persistente.

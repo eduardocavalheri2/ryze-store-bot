@@ -1,9 +1,7 @@
 .git
-.github
+.gitignore
 __pycache__
 *.pyc
-*.pyo
-*.pyd
 .env
-.env.*
-*.zip
+.venv
+venv
