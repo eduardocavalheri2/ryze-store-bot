@@ -1,40 +1,50 @@
-KING STORE DISCORD BOT V3 - RENDER FIX
+KING STORE DISCORD BOT - RENDER 429 ROBUST FIX
 
-Esta versão mantém as funções da V2 e corrige o principal problema visto no Render:
-- HTTP health server em 0.0.0.0:$PORT.
-- /health aceita também query strings.
-- Erros HTTP 429 do Discord não derrubam imediatamente o processo.
-- Backoff conservador para 429/Cloudflare antes de nova tentativa.
-- Falhas de sincronização dos slash commands não impedem o bot de conectar.
-- Slash commands são tentados novamente no on_ready quando necessário.
-- LoginFailure (token inválido) é mostrado claramente em vez de criar loop infinito.
-- Reconexões de Gateway/rede recebem espera progressiva.
-- Persistência dos botões continua funcionando.
-- data.json é protegido contra gravação parcial.
+Este pacote mantém a versão da loja e corrige o problema observado no Render:
+HTTP 429 (Too Many Requests) seguido por "RuntimeError: Session is closed".
+
+O QUE FOI CORRIGIDO
+- Tratamento robusto de HTTP 429 do Discord/Cloudflare.
+- Leitura de Retry-After quando o servidor fornece esse cabeçalho.
+- Backoff exponencial com jitter para evitar novas tentativas em sequência.
+- A sessão HTTP fechada não é reutilizada.
+- Em falhas de conexão, o processo é reiniciado de forma limpa para criar uma nova sessão aiohttp.
+- Servidor HTTP em 0.0.0.0:$PORT para o Render.
+- Endpoint /health para health check.
+- Sincronização dos slash commands protegida contra 429.
+- Botões persistentes restaurados após reinício.
+- Banco JSON mantido no mesmo formato.
+
+IMPORTANTE SOBRE O TOKEN
+NUNCA coloque o token do bot no código ou no GitHub.
+Use somente a variável DISCORD_TOKEN no Render.
+
+Se o token foi exposto em código, chat, print ou repositório, considere-o comprometido:
+1. Gere um novo token no Discord Developer Portal.
+2. No Render, abra Environment -> Environment Variables.
+3. Substitua DISCORD_TOKEN pelo novo token.
+4. Salve e faça um novo deploy.
 
 RENDER
 1. Substitua os arquivos do repositório pelos arquivos deste ZIP.
-2. No Render, mantenha o serviço como Web Service + Docker.
-3. Em Environment Variables, configure:
-   DISCORD_TOKEN = token real do seu bot
-   DISCORD_GUILD_ID = ID do seu servidor (recomendado)
-4. Health Check Path: /health
-5. Faça apenas um novo Deploy depois de substituir os arquivos.
-6. Se aparecer HTTP 429, NÃO fique reiniciando manualmente. Esta versão espera e tenta novamente.
+2. Faça commit/push para a branch usada pelo serviço.
+3. No Render, abra o serviço ryze-store-bot.
+4. Vá em Deploys e use "Deploy latest commit" (ou aguarde o deploy automático).
+5. Health Check Path: /health.
+6. Confira os Logs.
 
-IMPORTANTE SOBRE O TOKEN
-Nunca coloque o token real no GitHub.
-Se o token já foi exposto, gere outro no Discord Developer Portal.
-O arquivo .env.example contém apenas um placeholder.
+Se aparecer HTTP 429 novamente, o bot agora espera antes de tentar e cria uma sessão HTTP nova.
+Não fique apertando Deploy repetidamente: isso pode gerar novas tentativas de conexão e aumentar o rate limit.
 
-DOCKER
-O Dockerfile usa Python 3.12, instala requirements.txt e inicia bot.py.
-O Render define PORT automaticamente.
+VARIÁVEIS
+DISCORD_TOKEN = token atual do bot
+DISCORD_GUILD_ID = ID do servidor (recomendado)
+PORT = fornecida automaticamente pelo Render
+DATA_FILE = opcional; padrão data.json
 
 LOCAL
-- Edite uma cópia de .env.example para .env e coloque o token.
-- Execute start.bat.
-- Ou: pip install -r requirements.txt && python bot.py
+Windows: execute start.bat
+Ou: pip install -r requirements.txt && python bot.py
 
 COMANDOS
 /setup
@@ -46,7 +56,5 @@ COMANDOS
 /pedidos
 /gerarkey
 
-DADOS
-O data.json é armazenamento local simples para testes. No plano gratuito do Render,
-o armazenamento local pode não ser permanente depois de determinados reinícios/redeploys.
-Para produção, use armazenamento persistente ou banco de dados externo.
+OBSERVAÇÃO SOBRE DADOS
+O arquivo data.json funciona para testes. Em uma instância gratuita, o armazenamento local pode não ser permanente após determinados reinícios/redeploys. Para uma loja em produção, use banco de dados externo ou armazenamento persistente.

@@ -645,11 +645,21 @@ async def gerarkey(interaction: discord.Interaction):
 
 
 async def run_bot_with_retry() -> None:
-    """Inicia o bot e trata 429/Cloudflare sem entrar em loop agressivo."""
+    """Mantém o bot vivo e trata 429 sem reutilizar uma sessão HTTP fechada.
+
+    O erro anterior acontecia porque ``bot.close()`` fechava a sessão aiohttp e
+    o mesmo objeto ``bot`` era reutilizado na tentativa seguinte. Isso produz
+    ``RuntimeError: Session is closed``. Em caso de 429, esperamos usando
+    backoff exponencial + jitter e reiniciamos o processo para criar uma sessão
+    HTTP completamente nova.
+    """
     if not TOKEN or TOKEN == "COLE_O_TOKEN_AQUI":
         raise RuntimeError(
             "Configure a variável de ambiente DISCORD_TOKEN no Render."
         )
+
+    import random
+    import sys
 
     attempt = 0
     while True:
@@ -657,56 +667,96 @@ async def run_bot_with_retry() -> None:
             attempt += 1
             log.info("Conectando ao Discord (tentativa %s)...", attempt)
             await bot.start(TOKEN, reconnect=True)
-            # start() normalmente só retorna após close() / encerramento.
-            log.warning("Conexão com o Discord foi encerrada.")
+            log.warning("Conexão com o Discord foi encerrada. Reiniciando em 15s.")
             attempt = 0
+            await asyncio.sleep(15)
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
+
         except discord.LoginFailure:
             log.exception(
                 "Falha de login no Discord. Verifique DISCORD_TOKEN. "
                 "Um token inválido não será repetido automaticamente."
             )
             raise
+
         except discord.HTTPException as exc:
             if exc.status == 429:
-                # O Discord/Cloudflare pediu para reduzir a frequência.
-                # O limite é deliberadamente conservador para evitar outro bloqueio.
-                wait = min(300, max(30, 30 * (2 ** min(attempt - 1, 3))))
+                # Usa Retry-After quando disponível e, caso contrário, backoff.
+                retry_after = None
+                try:
+                    raw = exc.response.headers.get("Retry-After")
+                    if raw:
+                        retry_after = float(raw)
+                except (AttributeError, TypeError, ValueError):
+                    retry_after = None
+
+                base_wait = min(600, 60 * (2 ** min(attempt - 1, 3)))
+                wait = max(retry_after or 0, base_wait) + random.uniform(1, 8)
+                wait = min(900, wait)
+
                 log.error(
-                    "Discord respondeu HTTP 429 (Too Many Requests). "
-                    "Aguardando %ss antes de tentar novamente.",
+                    "Discord/Cloudflare respondeu HTTP 429 (Too Many Requests). "
+                    "Esperando %.0fs antes de criar uma sessão nova.",
                     wait,
                 )
-                await bot.close()
-                await asyncio.sleep(wait)
-                continue
 
-            log.exception("Discord retornou HTTP %s.", exc.status)
-            await bot.close()
-            await asyncio.sleep(15)
+                # Fecha corretamente a sessão atual. NÃO reutilizamos o objeto
+                # porque discord.py fecha a sessão aiohttp em bot.close().
+                try:
+                    await bot.close()
+                except Exception:
+                    log.exception("Erro ao fechar a sessão após HTTP 429.")
+
+                await asyncio.sleep(wait)
+
+                # Reexecuta o processo atual. Isso garante novo loop/sessão aiohttp
+                # e elimina o ``RuntimeError: Session is closed`` observado no Render.
+                log.warning("Reiniciando o processo para nova sessão do Discord...")
+                os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
+                raise RuntimeError("os.execv não deveria retornar")
+
+            log.exception("Discord retornou HTTP %s. Reiniciando em 20s.", exc.status)
+            try:
+                await bot.close()
+            except Exception:
+                pass
+            await asyncio.sleep(20)
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
+
         except (discord.GatewayNotFound, discord.ConnectionClosed) as exc:
-            wait = min(120, max(10, 10 * max(1, attempt)))
+            wait = min(180, max(15, 15 * max(1, attempt)))
             log.warning(
                 "Conexão com o Gateway caiu (%s). Nova tentativa em %ss.",
                 exc,
                 wait,
             )
-            await bot.close()
+            try:
+                await bot.close()
+            except Exception:
+                pass
             await asyncio.sleep(wait)
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
+
         except (OSError, asyncio.TimeoutError) as exc:
-            wait = min(120, max(10, 10 * max(1, attempt)))
-            log.warning(
-                "Erro de rede (%s). Nova tentativa em %ss.",
-                exc,
-                wait,
-            )
-            await bot.close()
+            wait = min(180, max(15, 15 * max(1, attempt)))
+            log.warning("Erro de rede (%s). Reiniciando em %ss.", exc, wait)
+            try:
+                await bot.close()
+            except Exception:
+                pass
             await asyncio.sleep(wait)
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
+
         except Exception:
             log.exception(
                 "Erro inesperado ao iniciar/manter o bot. Nova tentativa em 30s."
             )
-            await bot.close()
+            try:
+                await bot.close()
+            except Exception:
+                pass
             await asyncio.sleep(30)
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
 
 
 async def main():
